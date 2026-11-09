@@ -676,7 +676,7 @@ const reduced=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').
 
 /* ---------- canvas state ---------- */
 const cv=$('cv'),ctx=cv.getContext('2d');
-let zoom=1, lz=1, atomState=null, atomMode='bohr', cloudSub=null, cloudOrb=0;
+let zoom=1, lz=1, atomState=null, atomMode='bohr', cloudSub=null, cloudOrb=0, cloudStyle='shape';
 const clampZ=z=>Math.max(.4,Math.min(6,z));
 const ORBN={0:['s'],1:['px','py','pz'],2:['dxy','dyz','dxz','dx²−y²','dz²'],3:['fz³','fxz²','fyz²','fz(x²−y²)','fxyz','fx(x²−3y²)','fy(3x²−y²)']};
 const ANG={0:[()=>1],1:[(x,y,z)=>x,(x,y,z)=>y,(x,y,z)=>z],2:[(x,y,z)=>x*y,(x,y,z)=>y*z,(x,y,z)=>x*z,(x,y,z)=>x*x-y*y,(x,y,z)=>3*z*z-1],
@@ -700,6 +700,28 @@ function sampleCloud(n,l,norb){
   }
   rs.sort((a,b)=>a-b);
   return cloudCache[key]={orbs,R:(rs[Math.floor(rs.length*.88)]||rmax)*1.05};
+}
+const meshCache={};
+function orbMesh(l,o,N,M){
+  const key=l+'_'+o+'_'+N; if(meshCache[key]) return meshCache[key];
+  const f=ANG[l][o],V=[],Q=[],raw=[]; let fm=0;
+  for(let i=0;i<=N;i++){const th=Math.PI*i/N; for(let j=0;j<M;j++){const ph=2*Math.PI*j/M,d=[Math.sin(th)*Math.cos(ph),Math.sin(th)*Math.sin(ph),Math.cos(th)],v=Math.abs(f(d[0],d[1],d[2])); raw.push([d,v]); if(v>fm)fm=v;}}
+  raw.forEach(([d,v])=>{const r=v/fm;V.push([d[0]*r,d[1]*r,d[2]*r]);});
+  for(let i=0;i<N;i++)for(let j=0;j<M;j++){const j2=(j+1)%M,th=Math.PI*(i+.5)/N,ph=2*Math.PI*(j+.5)/M,sg=f(Math.sin(th)*Math.cos(ph),Math.sin(th)*Math.sin(ph),Math.cos(th))>=0?1:0;
+    Q.push([i*M+j,(i+1)*M+j,(i+1)*M+j2,i*M+j2,sg]);}
+  return meshCache[key]={V,Q};
+}
+function drawShape(w,h,t){
+  const cx=w/2,cy=h/2,S=Math.min(w,h)/2*.86*zoom,one=view.sel!=='all',list=one?[[view.meshes[view.sel],0]]:view.meshes.map((m,i)=>[m,i]),items=[];
+  const Lx=-.38,Ly=.5,Lz=.78;
+  list.forEach(([m,oi])=>{const P=m.V.map(v=>mulM(RM,v));
+    m.Q.forEach(q=>{const a=P[q[0]],b=P[q[1]],c=P[q[2]],d=P[q[3]];
+      const ux=c[0]-a[0],uy=c[1]-a[1],uz=c[2]-a[2],vx=d[0]-b[0],vy=d[1]-b[1],vz=d[2]-b[2];
+      let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const nl=Math.hypot(nx,ny,nz); if(nl<1e-9)return;
+      const lam=Math.abs(nx*Lx+ny*Ly+nz*Lz)/nl;
+      items.push([(a[2]+b[2]+c[2]+d[2])/4,a,b,c,d,shade(one?(q[4]?OCOL[0]:OCOL[1]):OCOL[oi%7],(lam-.62)*.95)]);});});
+  items.sort((x,y)=>x[0]-y[0]); ctx.lineWidth=.6; ctx.lineJoin='round';
+  for(const it of items){ctx.beginPath();ctx.moveTo(cx+it[1][0]*S,cy-it[1][1]*S);ctx.lineTo(cx+it[2][0]*S,cy-it[2][1]*S);ctx.lineTo(cx+it[3][0]*S,cy-it[3][1]*S);ctx.lineTo(cx+it[4][0]*S,cy-it[4][1]*S);ctx.closePath();ctx.fillStyle=it[5];ctx.strokeStyle=it[5];ctx.fill();ctx.stroke();}
 }
 function drawCloud(w,h,t){
   const cx=w/2,cy=h/2,S=Math.min(w,h)/2/view.R*.95*zoom,M=RM,one=view.sel!=='all',sz=one?2.1:1.7;
@@ -725,6 +747,7 @@ function draw(){
   const [w,h]=fit(); ctx.clearRect(0,0,w,h); if(!view) return; const t=tok();
   if(view.mode==='bohr') return drawBohr(w,h,t);
   if(view.mode==='cloud') return drawCloud(w,h,t);
+  if(view.mode==='shape') return drawShape(w,h,t);
   const mol=view.mol,P=view.P.map(p=>mulM(RM,p)),S=Math.min(w,h)/2/view.R*.98*zoom,cx=w/2,cy=h/2,D=view.R*4+6;
   const pr=p=>{const f=D/(D-p[2]);return [cx+p[0]*S*f,cy-p[1]*S*f,f];};
   const ar=sym=>.2+.26*cov(sym), items=[];
@@ -852,17 +875,22 @@ function setAtomMode(m){
     if(!cloudSub||!cf.list.some(x=>x[0]===cloudSub)) cloudSub=cf.list[cf.list.length-1][0];
     const cnt=cf.list.find(x=>x[0]===cloudSub)[1],nn=+cloudSub[0],l=LORD.indexOf(cloudSub[1]),norb=Math.min(cnt,2*l+1),c=sampleCloud(nn,l,norb);
     if(cloudOrb!=='all'&&!(cloudOrb<norb)) cloudOrb=0;
-    view={mode:'cloud',orbs:c.orbs,R:c.R,sel:norb===1?0:cloudOrb};
-    $('cvTitle').textContent='ענן אלקטרונים';
+    const sel=norb===1?0:cloudOrb, shp=cloudStyle==='shape';
+    view=shp?{mode:'shape',sel,meshes:ANG[l].slice(0,norb).map((f,i)=>sel==='all'?orbMesh(l,i,20,30):orbMesh(l,i,30,48))}:{mode:'cloud',orbs:c.orbs,R:c.R,sel};
+    $('cvTitle').textContent=shp?'צורת האורביטל':'ענן אלקטרונים';
     const names=ORBN[l].slice(0,norb).map(nm=>l?nm.replace(/^[pdf]/,x=>nn+x):nn+'s');
     $('subs').hidden=false; $('subs').innerHTML='<span class="lbl">תת־רמה:</span>'+cf.list.map(([sb,k])=>'<button type="button" class="chip" data-sub="'+sb+'" aria-pressed="'+(sb===cloudSub)+'">'+sb+'<sup>'+k+'</sup></button>').join('')+
-      (norb>1?'<span style="flex-basis:100%"></span><span class="lbl">אורביטל:</span>'+names.map((nm,i)=>'<button type="button" class="chip" data-orb="'+i+'" aria-pressed="'+(view.sel===i)+'">'+nm+'</button>').join('')+'<button type="button" class="chip" data-orb="all" aria-pressed="'+(view.sel==='all')+'">הכול יחד</button>':'');
-    $('cvCap').textContent='כל נקודה היא מקום שבו סביר למצוא את האלקטרון; אזור צפוף פירושו הסתברות גבוהה. '+(view.sel==='all'?'כל צבע הוא אורביטל אחר באותה תת־רמה. ':'שני הצבעים מסמנים את הסימן (הפאזה) של פונקציית הגל. ')+'בתת־הרמה הזו מאוכלסים '+norb+' אורביטלים ב־'+cnt+' אלקטרונים. גררו כדי לסובב. הצורות הן של אטום דמוי־מימן, כלומר קירוב איכותי.';
+      (norb>1?'<span style="flex-basis:100%"></span><span class="lbl">אורביטל:</span>'+names.map((nm,i)=>'<button type="button" class="chip" data-orb="'+i+'" aria-pressed="'+(view.sel===i)+'">'+nm+'</button>').join('')+'<button type="button" class="chip" data-orb="all" aria-pressed="'+(view.sel==='all')+'">הכול יחד</button>':'')+
+      '<span style="flex-basis:100%"></span><span class="lbl">תצוגה:</span><button type="button" class="chip" data-style="shape" aria-pressed="'+shp+'">צורה מלאה</button><button type="button" class="chip" data-style="cloud" aria-pressed="'+!shp+'">ענן נקודות</button>';
+    const tail='בתת־הרמה הזו מאוכלסים '+norb+' אורביטלים ב־'+cnt+' אלקטרונים. גררו כדי לסובב, צבטו כדי להגדיל.';
+    $('cvCap').textContent=shp
+      ?'זו הצורה המקובלת בספרי הלימוד: האזור שבו סביר למצוא את האלקטרון. '+(view.sel==='all'?'כל צבע הוא אורביטל אחר. ':'שני הצבעים מסמנים את הסימן (הפאזה) של פונקציית הגל. ')+(nn-l-1>0?'בתוך האורביטל הזה יש גם צמתים פנימיים שלא נראים בצורה הזו; הם נראים בענן הנקודות. ':'')+tail
+      :'כל נקודה היא מקום שבו סביר למצוא את האלקטרון; אזור צפוף פירושו הסתברות גבוהה. '+(view.sel==='all'?'כל צבע הוא אורביטל אחר באותה תת־רמה. ':'שני הצבעים מסמנים את הסימן (הפאזה) של פונקציית הגל. ')+tail+' הצורות הן של אטום דמוי־מימן, כלומר קירוב איכותי.';
   }
   kick();
 }
 $('atomTabs').addEventListener('click',e=>{const b=e.target.closest('button[data-m]'); if(b&&atomState) setAtomMode(b.dataset.m);});
-$('subs').addEventListener('click',e=>{const b=e.target.closest('button[data-sub]'); if(b&&atomState){cloudSub=b.dataset.sub;setAtomMode('cloud');return;} const o=e.target.closest('button[data-orb]'); if(o&&atomState){cloudOrb=o.dataset.orb==='all'?'all':+o.dataset.orb;setAtomMode('cloud');}});
+$('subs').addEventListener('click',e=>{const b=e.target.closest('button[data-sub]'); if(b&&atomState){cloudSub=b.dataset.sub;setAtomMode('cloud');return;} const o=e.target.closest('button[data-orb]'); if(o&&atomState){cloudOrb=o.dataset.orb==='all'?'all':+o.dataset.orb;setAtomMode('cloud');return;} const st=e.target.closest('button[data-style]'); if(st&&atomState){cloudStyle=st.dataset.style;setAtomMode('cloud');}});
 function showAtom(sym,q,nm){
   const el=ELS[sym]; if(q>el.Z) throw new Error('ל־'+el.he+' יש רק '+el.Z+' אלקטרונים.');
   const cf=config(el.Z,q), n=Math.round(el.mass)-el.Z;
