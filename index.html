@@ -720,8 +720,9 @@ function drawShape(w,h,t){
       let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const nl=Math.hypot(nx,ny,nz); if(nl<1e-9)return;
       const lam=Math.abs(nx*Lx+ny*Ly+nz*Lz)/nl;
       items.push([(a[2]+b[2]+c[2]+d[2])/4,a,b,c,d,shade(one?(q[4]?OCOL[0]:OCOL[1]):OCOL[oi%7],(lam-.62)*.95)]);});});
-  items.sort((x,y)=>x[0]-y[0]); ctx.lineWidth=.6; ctx.lineJoin='round';
+  items.sort((x,y)=>x[0]-y[0]); ctx.lineWidth=.5; ctx.lineJoin='round'; ctx.globalAlpha=one?.6:.5;
   for(const it of items){ctx.beginPath();ctx.moveTo(cx+it[1][0]*S,cy-it[1][1]*S);ctx.lineTo(cx+it[2][0]*S,cy-it[2][1]*S);ctx.lineTo(cx+it[3][0]*S,cy-it[3][1]*S);ctx.lineTo(cx+it[4][0]*S,cy-it[4][1]*S);ctx.closePath();ctx.fillStyle=it[5];ctx.strokeStyle=it[5];ctx.fill();ctx.stroke();}
+  ctx.globalAlpha=1;
 }
 function drawCloud(w,h,t){
   const cx=w/2,cy=h/2,S=Math.min(w,h)/2/view.R*.95*zoom,M=RM,one=view.sel!=='all',sz=one?2.1:1.7;
