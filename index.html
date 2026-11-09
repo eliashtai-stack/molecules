@@ -827,20 +827,32 @@ async function askClaude(q){
   if(r&&r.found&&r.smiles) cacheSet(key,r);
   return r;
 }
-async function getJSON(u){const c=new AbortController(),t=setTimeout(()=>c.abort(),8000);try{const r=await fetch(u,{signal:c.signal});if(!r.ok)return null;return await r.json();}catch(e){return null;}finally{clearTimeout(t);}}
+let DIAG=[];
+async function getJSON(u,tag){const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
+  try{const r=await fetch(u,{signal:c.signal}); if(!r.ok){DIAG.push(tag+'=HTTP '+r.status);return null;} const j=await r.json(); DIAG.push(tag+'=ok'); return j;}
+  catch(e){DIAG.push(tag+'='+(e&&e.name==='AbortError'?'timeout':'blocked'));return null;}finally{clearTimeout(t);}}
+async function heToEn(term){
+  let j=await getJSON('https://he.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=langlinks&lllang=en&lllimit=1&titles='+encodeURIComponent(term),'wiki');
+  const pages=j&&j.query&&j.query.pages,pg=pages&&Object.values(pages)[0],ll=pg&&pg.langlinks&&pg.langlinks[0],en=ll&&(ll['*']||ll.title);
+  if(en) return {en:en.replace(/\s*\(.*\)$/,''),he:pg.title};
+  j=await getJSON('https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&origin=*&language=he&uselang=en&type=item&limit=1&search='+encodeURIComponent(term),'wikidata');
+  const it=j&&j.search&&j.search[0],lab=it&&((it.display&&it.display.label&&it.display.label.language==='en'&&it.display.label.value)||(/^[\x20-\x7E]+$/.test(it.label||'')&&it.label));
+  return lab?{en:lab,he:term}:null;
+}
 async function webLookup(q){
-  const key='w:'+nameKey(q),c=cacheGet(key); if(c) return c;
-  let term=clean(q),he=null;
-  if(/[א-ת]/.test(term)){
-    const j=await getJSON('https://he.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=langlinks&lllang=en&titles='+encodeURIComponent(term));
-    const pages=j&&j.query&&j.query.pages,pg=pages&&Object.values(pages)[0],en=pg&&pg.langlinks&&pg.langlinks[0]&&pg.langlinks[0]['*'];
-    if(!en) return null; he=pg.title; term=en.replace(/\s*\(.*\)$/,'');
+  const key='w2:'+nameKey(q),c=cacheGet(key); if(c) return c;
+  DIAG=[]; let term=clean(q),he=null;
+  if(/[א-ת]/.test(term)){ const t=await heToEn(term); if(!t){DIAG.push('no-english-name');return null;} he=t.he; term=t.en; DIAG.push('en:'+term); }
+  const base='https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/'; let pr=null;
+  const kinds=[['name/',term]]; if(/^[A-Za-z0-9()]+$/.test(term)&&/[A-Z]/.test(term)&&/\d/.test(term)) kinds.push(['fastformula/',term]);
+  outer: for(const [kind,t] of kinds) for(const prop of ['SMILES','CanonicalSMILES','IsomericSMILES']){
+    const j=await getJSON(base+kind+encodeURIComponent(t)+'/property/'+prop+',MolecularFormula,Title/JSON'+(kind==='fastformula/'?'?MaxRecords=1':''),'pubchem-'+prop);
+    const x=j&&j.PropertyTable&&j.PropertyTable.Properties&&j.PropertyTable.Properties[0];
+    if(x&&(x.SMILES||x.CanonicalSMILES||x.ConnectivitySMILES||x.IsomericSMILES)){pr=x;break outer;}
+    if(DIAG[DIAG.length-1].endsWith('HTTP 404')||DIAG[DIAG.length-1].endsWith('blocked')||DIAG[DIAG.length-1].endsWith('timeout')) break;
   }
-  const base='https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/',props='/property/CanonicalSMILES,MolecularFormula,Title/JSON';
-  let j=await getJSON(base+'name/'+encodeURIComponent(term)+props);
-  if(!j&&/^[A-Za-z0-9()]+$/.test(term)&&/[A-Z]/.test(term)&&/\d/.test(term)) j=await getJSON(base+'fastformula/'+encodeURIComponent(term)+props+'?MaxRecords=1');
-  const pr=j&&j.PropertyTable&&j.PropertyTable.Properties&&j.PropertyTable.Properties[0]; if(!pr) return null;
-  const sm=pr.CanonicalSMILES||pr.ConnectivitySMILES||pr.SMILES||pr.IsomericSMILES; if(!sm) return null;
+  if(!pr) return null;
+  const sm=pr.SMILES||pr.CanonicalSMILES||pr.ConnectivitySMILES||pr.IsomericSMILES;
   const f=(pr.MolecularFormula||'').replace(/([+-])(\d*)$/,(m,sg,d)=>'^'+d+sg);
   const r={he:he||q,en:pr.Title,f:f||undefined,s:sm,web:true}; cacheSet(key,r); return r;
 }
@@ -859,7 +871,7 @@ async function run(q){
       status('"'+q+'" לא במאגר המובנה. מחפש…');
       r=await askClaude(q);
     } finally{ $('go').disabled=false; }
-    if(!r){ status('לא מצאתי את "'+q+'". נסו שם באנגלית או נוסחה, למשל H2O.',true); return; }
+    if(!r){ status('לא מצאתי את "'+q+'". נסו שם באנגלית או נוסחה, למשל H2O.'+(DIAG.length?' [אבחון: '+DIAG.join(', ')+']':''),true); return; }
     if(!r.found||!r.smiles){ status('לא זיהיתי חומר בשם "'+q+'". בדקו את האיות או נסו נוסחה.',true); return; }
     showMol({he:r.name_he||q,en:r.name_en,f:r.formula,s:r.smiles,st:r.state,mp:typeof r.mp==='number'?r.mp:null,bp:typeof r.bp==='number'?r.bp:null,note:r.note||'',ai:true});
     status('');
