@@ -36,7 +36,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:17p
 h1{font-family:var(--display);font-weight:700;font-size:28px;margin:0;text-wrap:balance}
 .lead{margin:2px 0 0;color:var(--muted);font-size:16px}
 form{display:flex;gap:8px}
-#q{flex:1;min-width:0;font:inherit;font-size:18px;padding:11px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)}
+#q{text-align:right;flex:1;min-width:0;font:inherit;font-size:18px;padding:11px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)}
 #q:focus-visible,button:focus-visible,.chip:focus-visible,input[type=checkbox]:focus-visible{outline:2.5px solid var(--accent);outline-offset:2px}
 button.go{font:inherit;font-weight:700;padding:11px 20px;border:0;border-radius:10px;background:var(--accent);color:var(--surface);cursor:pointer}
 .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -63,7 +63,7 @@ button.go{font:inherit;font-weight:700;padding:11px 20px;border:0;border-radius:
 .ctrl label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .ctrl input{accent-color:var(--accent);width:17px;height:17px}
 .cap{font-size:14.5px;color:var(--muted);margin:0}
-#lewis{display:flex;align-items:center;justify-content:center;min-height:300px;overflow-x:auto}
+#lewis{display:flex;align-items:center;justify-content:safe center;min-height:300px;max-height:460px;overflow:auto}
 #lewis svg{display:block;width:100%;height:auto;max-height:340px}
 .lw-sym{fill:var(--ink);font:600 20px var(--mono);text-anchor:middle;dominant-baseline:central}
 .lw-bond{stroke:var(--ink);stroke-width:1.9;stroke-linecap:round}
@@ -91,7 +91,7 @@ footer{color:var(--muted);font-size:14px;max-width:70ch}
   </header>
 
   <form id="search" autocomplete="off">
-    <input id="q" type="text" dir="auto" inputmode="text" placeholder="למשל: מים, CO2, אמוניום, Fe3+" aria-label="שם או נוסחה">
+    <input id="q" type="text" dir="rtl" inputmode="text" placeholder="למשל: מים, CO2, אמוניום, Fe3+" aria-label="שם או נוסחה">
     <button class="go" type="submit" id="go">הצג</button>
   </form>
   <div class="chips" id="sugs"></div>
@@ -117,7 +117,7 @@ footer{color:var(--muted);font-size:14px;max-width:70ch}
     </section>
     <section class="card">
       <h3>מבנה לואיס</h3>
-      <div id="lewis"></div>
+      <div id="lewis" dir="ltr"></div>
       <ul class="legend" id="lwLegend"></ul>
     </section>
   </div>
@@ -596,7 +596,48 @@ function suggest(raw){
   for(const e of ELIST){ if(nameKey(e.he).includes(k)||e.en.toLowerCase().startsWith(k)){out.push({label:e.he,q:e.he});} if(out.length>=6) break; }
   return out;
 }
-if(typeof module!=='undefined') module.exports={prettyFormula,parseSmiles,analyze,build3D,layout2D,dipole,geoOf,lookupLocal,config,DB,ELS,ELIST,hillFormula,gapAngles,V3,blen};
+/* ================= PubChem records ================= */
+function recToMol(rec){
+  const at=rec.atoms,n=at.aid.length,idx={}; at.aid.forEach((a,i)=>idx[a]=i);
+  const atoms=at.element.map(z=>{const e=ELIST[z-1]; if(!e) throw new Error('bad element'); return {sym:e.sym,fc:0};});
+  (at.charge||[]).forEach(c=>{ if(idx[c.aid]!=null) atoms[idx[c.aid]].fc=c.value; });
+  const bonds=[],b=rec.bonds; if(b&&b.aid1) b.aid1.forEach((a,i)=>{const o=b.order[i]; if(idx[a]==null||idx[b.aid2[i]]==null) throw new Error('bad bond'); bonds.push({a:idx[a],b:idx[b.aid2[i]],o:o>=1&&o<=3?o:1});});
+  const co=rec.coords&&rec.coords[0],cf=co&&co.conformers&&co.conformers[0]; let xyz=null;
+  if(cf&&cf.x&&cf.y){ xyz=new Array(n); co.aid.forEach((a,i)=>{ if(idx[a]!=null) xyz[idx[a]]=[cf.x[i],cf.y[i],cf.z?cf.z[i]:0]; });
+    for(let i=0;i<n;i++) if(!xyz[i]||xyz[i].some(v=>typeof v!=='number'||isNaN(v))){xyz=null;break;} }
+  return {atoms,bonds,xyz,is3d:!!(cf&&cf.z),aids:at.aid.slice()};
+}
+function lonePairsFromGeometry(mol,P){
+  return mol.atoms.map(a=>{
+    const k=a.lp+a.rad; if(!k) return [];
+    const U=a.nb.map(x=>V3.unit(V3.sub(P[x.j],P[a.i])));
+    let L=getDirs(Math.max(k,a.sn)).slice(0,k).map(v=>v.slice());
+    if(U.length){
+      const s=V3.mul(U.reduce((q,u)=>V3.add(q,u),[0,0,0]),-1);
+      L=L.map((v,i)=>V3.unit(V3.add(V3.add(v,V3.mul(s,1.5)),[.013*(i+1),.027*(i+1),-.019*(i+1)])));
+      for(let it=0;it<300;it++){
+        L=L.map((v,i)=>{let f=[0,0,0];
+          U.forEach(u=>{const d=V3.sub(v,u),l=V3.len(d)||1e-3;f=V3.add(f,V3.mul(d,1/(l*l*l)));});
+          L.forEach((w,j)=>{ if(j===i)return; const d=V3.sub(v,w),l=V3.len(d)||1e-3;f=V3.add(f,V3.mul(d,1.1/(l*l*l)));});
+          return V3.unit(V3.add(v,V3.mul(f,.05)));});
+      }
+    }
+    return L.map((d,i)=>({d,single:i>=a.lp}));
+  });
+}
+function geometryFromCoords(mol,xyz){
+  const n=xyz.length,cen=V3.mul(xyz.reduce((s,p)=>V3.add(s,p),[0,0,0]),1/n),P=xyz.map(p=>V3.sub(p,cen));
+  let R=0; P.forEach((p,k)=>{R=Math.max(R,V3.len(p)+cov(mol.atoms[k].sym)+.9);});
+  return {P,lps:lonePairsFromGeometry(mol,P),R};
+}
+function layoutFromCoords(mol,xy){
+  const L=mol.bonds.map(b=>Math.hypot(xy[b.a][0]-xy[b.b][0],xy[b.a][1]-xy[b.b][1])).filter(v=>v>1e-6).sort((a,b)=>a-b);
+  const u=L.length?L[L.length>>1]:1, pos=xy.map(p=>[p[0]/u,-p[1]/u]);
+  let y0=1e9,y1=-1e9; pos.forEach(p=>{y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}); const cy=(y0+y1)/2; pos.forEach(p=>{p[1]-=cy;});
+  mol.comps.forEach(c=>{let a=1e9,b=-1e9,d=1e9,e=-1e9; c.atoms.forEach(k=>{a=Math.min(a,pos[k][0]);b=Math.max(b,pos[k][0]);d=Math.min(d,pos[k][1]);e=Math.max(e,pos[k][1]);}); c.box=[a,d,b,e];});
+  return pos;
+}
+if(typeof module!=='undefined') module.exports={recToMol,lonePairsFromGeometry,geometryFromCoords,layoutFromCoords,prettyFormula,parseSmiles,analyze,build3D,layout2D,dipole,geoOf,lookupLocal,config,DB,ELS,ELIST,hillFormula,gapAngles,V3,blen};
 </script>
 
 <script>
@@ -666,8 +707,8 @@ if(window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListene
 new MutationObserver(kick).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
 /* ---------- Lewis (molecule) ---------- */
-function lewisMol(mol){
-  const pos=layout2D(mol),U=58,A=mol.atoms,parts=[];
+function lewisMol(mol,given){
+  const pos=given||layout2D(mol),U=58,A=mol.atoms,parts=[];
   const X=i=>pos[i][0]*U,Y=i=>pos[i][1]*U, rx=a=>a.sym.length>1?19:14, ry=15;
   let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; const ext=(x,y)=>{x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);};
   mol.bonds.forEach(b=>{
@@ -700,7 +741,7 @@ function lewisMol(mol){
     } else { parts.push('<text class="lw-chg" x="'+(X(a0.i)+rx(a0)-2)+'" y="'+(Y(a0.i)-13)+'">'+chargeStr(c.charge)+'</text>'); ext(X(a0.i)+rx(a0)+26,Y(a0.i)-24); }
   });
   const W=x1-x0+12,H=y1-y0+12;
-  return '<svg xmlns="http://www.w3.org/2000/svg" direction="ltr" viewBox="'+(x0-6).toFixed(1)+' '+(y0-6).toFixed(1)+' '+W.toFixed(1)+' '+H.toFixed(1)+'" style="max-width:'+Math.round(W*1.45)+'px" role="img" aria-label="מבנה לואיס">'+parts.join('')+'</svg>';
+  return '<svg xmlns="http://www.w3.org/2000/svg" direction="ltr" viewBox="'+(x0-6).toFixed(1)+' '+(y0-6).toFixed(1)+' '+W.toFixed(1)+' '+H.toFixed(1)+'" style="'+(W>560?'flex:none;width:'+Math.round(W*.85)+'px;max-width:none;max-height:none':'max-width:'+Math.round(W*1.45)+'px')+'" role="img" aria-label="מבנה לואיס">'+parts.join('')+'</svg>';
 }
 /* ---------- Lewis (single atom / ion) ---------- */
 function lewisAtom(el,q){
@@ -736,7 +777,7 @@ function showAtom(sym,q,nm){
   $('cvTitle').textContent='מודל בוהר'; $('optLP').parentElement.hidden=true;
   $('cvCap').textContent='האלקטרונים מסודרים ברמות אנרגיה סביב הגרעין. המספר ליד כל מעגל הוא מספר האלקטרונים ברמה.';
   const lw=lewisAtom(el,q);
-  $('lewis').innerHTML=lw||'<p class="cap">למתכות מעבר ולגוש f לא נהוג לצייר סמל לואיס. ראו את היערכות האלקטרונים בטבלה.</p>';
+  $('lewis').innerHTML=lw||'<p class="cap" dir="rtl">למתכות מעבר ולגוש f לא נהוג לצייר סמל לואיס. ראו את היערכות האלקטרונים בטבלה.</p>';
   $('lwLegend').innerHTML=lw?'<li><i style="background:var(--accent)"></i>אלקטרון ערכיות</li>':'';
   const cstr=l=>l.map(([s,k])=>s+'<sup>'+k+'</sup>').join(' ');
   const iso=q?ELIST.find(e=>e.group===18&&e.Z===cf.ne):null;
@@ -756,19 +797,23 @@ function showAtom(sym,q,nm){
 }
 
 function showMol(entry){
-  const mol=analyze(parseSmiles(entry.s));
-  if(mol.atoms.length===1) return showAtom(mol.atoms[0].sym,mol.atoms[0].fc,entry.ai?null:entry.he);
-  const A=mol.atoms,b3=build3D(mol),multi=mol.comps.length>1;
+  let mol=null,b3=null,pos2=null,src='vsepr';
+  try{ if(entry.rec3){const r=recToMol(entry.rec3); if(r.xyz&&r.is3d&&r.atoms.length<=400){mol=analyze({atoms:r.atoms,bonds:r.bonds}); b3=geometryFromCoords(mol,r.xyz); src='pubchem3d';
+      if(entry.rec2){ try{const q=recToMol(entry.rec2),m={}; q.aids.forEach((a,i)=>m[a]=i); const xy=r.aids.map((a,i)=>m[a]!=null&&q.atoms[m[a]].sym===r.atoms[i].sym&&q.xyz?q.xyz[m[a]]:null); if(xy.every(Boolean)) pos2=layoutFromCoords(mol,xy);}catch(e){} } } } }catch(e){mol=null;b3=null;pos2=null;src='vsepr';}
+  if(!mol&&entry.rec2){ try{const q=recToMol(entry.rec2); if(q.xyz&&q.atoms.length<=160){mol=analyze({atoms:q.atoms,bonds:q.bonds}); pos2=layoutFromCoords(mol,q.xyz);} }catch(e){mol=null;pos2=null;} }
+  if(!mol) mol=analyze(parseSmiles(entry.s));
+  if(mol.atoms.length===1) return showAtom(mol.atoms[0].sym,mol.atoms[0].fc,entry.ai||entry.web?null:entry.he);
+  if(!b3){ if(mol.atoms.length>160) throw new Error('המולקולה גדולה מדי להצגה כאן ('+mol.atoms.length+' אטומים), ואין לה מבנה תלת־ממדי מוכן ב־PubChem'); b3=build3D(mol); }
+  const A=mol.atoms,multi=mol.comps.length>1;
   const same=A.every(a=>a.sym===A[0].sym);
   const kind=multi?'תרכובת יונית':mol.charge?(mol.charge>0?'יון רב־אטומי (קטיון)':'יון רב־אטומי (אניון)'):same?'מולקולה של יסוד':'מולקולה';
-  if(mol.atoms.length>90) throw new Error('המולקולה גדולה מדי להצגה כאן');
-  let note=entry.note||''; if(entry.web) note='החומר אינו במאגר המובנה. המבנה נשלף ממאגר PubChem, והצורה המרחבית מחושבת כאן לפי VSEPR.'; if(entry.ai) note='החומר הזה אינו במאגר המובנה. המבנה והנתונים הופקו בעזרת Claude, וכדאי לאמת אותם מול ספר הלימוד. '+note;
+  let note=entry.note||''; if(entry.web) note=src==='pubchem3d'?'החומר אינו במאגר המובנה. המבנה והצורה המרחבית נשלפו ממאגר PubChem.':'החומר אינו במאגר המובנה. המבנה נשלף ממאגר PubChem, והצורה המרחבית מחושבת כאן לפי VSEPR.'; if(entry.ai) note='החומר הזה אינו במאגר המובנה. המבנה והנתונים הופקו בעזרת Claude, וכדאי לאמת אותם מול ספר הלימוד. '+note;
   head(entry.he,entry.f||prettyFormula(mol.atoms,mol.charge),kind,note,entry.ai); related([]);
   view={mode:'3d',mol,P:b3.P,lps:b3.lps,R:b3.R}; RM=mm(rotX(-.35),rotY(.5));
   $('cvTitle').textContent='מודל תלת־ממדי'; $('optLP').parentElement.hidden=false;
   const centers=A.filter(a=>a.deg>=2);
   $('cvCap').textContent=multi?'מוצגת יחידת נוסחה אחת. במציאות היונים מסודרים בסריג גבישי. גררו כדי לסובב.':'גררו כדי לסובב. הענן הירקרק מסמן זוג אלקטרונים לא קושר.';
-  $('lewis').innerHTML=lewisMol(mol);
+  $('lewis').innerHTML=lewisMol(mol,pos2);
   const leg=['<li><i style="background:var(--accent)"></i>אלקטרון לא קושר</li>','<li>קו = זוג קושר</li>']; if(A.some(a=>a.fc)&&!multi) leg.push('<li><i style="background:var(--warn)"></i>מטען פורמלי</li>');
   $('lwLegend').innerHTML=leg.join('');
   /* data */
@@ -794,6 +839,9 @@ function showMol(entry){
   rows([
     ['נוסחה',fHtml(entry.f||prettyFormula(mol.atoms,mol.charge))],
     entry.en?['שם באנגלית',ltr(esc(entry.en))]:null,
+    entry.iupac?['שם IUPAC',ltr(esc(entry.iupac))]:null,
+    ['מספר אטומים',String(A.length)],
+    entry.web?['מקור הצורה המרחבית',src==='pubchem3d'?'מודל תלת־ממדי מחושב של PubChem':'מחושבת כאן לפי VSEPR (זוויות אידיאליות)']:null,
     ['מסה מולרית',ltr(mol.mass.toFixed(2)+' g/mol')],
     mol.charge?['מטען כולל',ltr(chargeStr(mol.charge))]:null,
     ions?['יונים',ions.join(' , ')]:null,
@@ -840,21 +888,28 @@ async function heToEn(term){
   return lab?{en:lab,he:term}:null;
 }
 async function webLookup(q){
-  const key='w2:'+nameKey(q),c=cacheGet(key); if(c) return c;
+  const key='w3:'+nameKey(q),c=cacheGet(key); if(c) return c;
   DIAG=[]; let term=clean(q),he=null;
   if(/[א-ת]/.test(term)){ const t=await heToEn(term); if(!t){DIAG.push('no-english-name');return null;} he=t.he; term=t.en; DIAG.push('en:'+term); }
   const base='https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/'; let pr=null;
   const kinds=[['name/',term]]; if(/^[A-Za-z0-9()]+$/.test(term)&&/[A-Z]/.test(term)&&/\d/.test(term)) kinds.push(['fastformula/',term]);
-  outer: for(const [kind,t] of kinds) for(const prop of ['SMILES','CanonicalSMILES','IsomericSMILES']){
-    const j=await getJSON(base+kind+encodeURIComponent(t)+'/property/'+prop+',MolecularFormula,Title/JSON'+(kind==='fastformula/'?'?MaxRecords=1':''),'pubchem-'+prop);
+  outer: for(const [kind,t] of kinds) for(const prop of ['SMILES,MolecularFormula,Title,IUPACName','CanonicalSMILES,MolecularFormula,Title','IsomericSMILES,MolecularFormula,Title']){
+    const j=await getJSON(base+kind+encodeURIComponent(t)+'/property/'+prop+'/JSON'+(kind==='fastformula/'?'?MaxRecords=1':''),'pubchem');
     const x=j&&j.PropertyTable&&j.PropertyTable.Properties&&j.PropertyTable.Properties[0];
     if(x&&(x.SMILES||x.CanonicalSMILES||x.ConnectivitySMILES||x.IsomericSMILES)){pr=x;break outer;}
-    if(DIAG[DIAG.length-1].endsWith('HTTP 404')||DIAG[DIAG.length-1].endsWith('blocked')||DIAG[DIAG.length-1].endsWith('timeout')) break;
+    if(!DIAG[DIAG.length-1].endsWith('HTTP 400')) break;
   }
   if(!pr) return null;
   const sm=pr.SMILES||pr.CanonicalSMILES||pr.ConnectivitySMILES||pr.IsomericSMILES;
   const f=(pr.MolecularFormula||'').replace(/([+-])(\d*)$/,(m,sg,d)=>'^'+d+sg);
-  const r={he:he||q,en:pr.Title,f:f||undefined,s:sm,web:true}; cacheSet(key,r); return r;
+  let rec3=null,rec2=null;
+  if(pr.CID){
+    const [x,y]=await Promise.all([getJSON(base+'cid/'+pr.CID+'/JSON?record_type=3d','3d'),getJSON(base+'cid/'+pr.CID+'/JSON?record_type=2d','2d')]);
+    const slim=j=>{const c=j&&j.PC_Compounds&&j.PC_Compounds[0]; if(!c||!c.atoms||!c.coords||!c.coords[0]||!c.coords[0].conformers) return null; const k=c.coords[0].conformers[0];
+      return {atoms:c.atoms,bonds:c.bonds,coords:[{aid:c.coords[0].aid,conformers:[{x:k.x,y:k.y,z:k.z}]}]};};
+    try{rec3=slim(x);}catch(e){} try{rec2=slim(y);}catch(e){}
+  }
+  const r={he:he||q,en:pr.Title,iupac:pr.IUPACName,f:f||undefined,s:sm,web:true,rec3,rec2}; cacheSet(key,r); return r;
 }
 async function run(q){
   q=q.trim(); if(!q) return;
@@ -880,8 +935,9 @@ async function run(q){
 const EX=['מים','CO2','אמוניה','בנזן','סולפט','נתרן','Fe3+','נתרן כלורי','SF6','אתנול'];
 function exampleChips(){return '<span class="lbl">דוגמאות:</span>'+EX.map(x=>'<button type="button" class="chip" dir="auto" data-q="'+esc(x)+'">'+esc(x)+'</button>').join('');}
 $('search').addEventListener('submit',e=>{e.preventDefault();run($('q').value);});
-$('q').addEventListener('input',()=>{const s=suggest($('q').value);$('sugs').innerHTML=s.length?'<span class="lbl">במאגר:</span>'+s.map(x=>'<button type="button" class="chip" data-q="'+esc(x.q)+'">'+esc(x.label)+'</button>').join(''):exampleChips();});
-document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('.chip[data-q]'); if(b){$('q').value=b.dataset.q;run(b.dataset.q);window.scrollTo({top:0,behavior:reduced?'auto':'smooth'});}});
+const setDir=()=>{const v=$('q').value;$('q').dir=(!v||/[\u05D0-\u05EA]/.test(v))?'rtl':'ltr';};
+$('q').addEventListener('input',()=>{setDir();const s=suggest($('q').value);$('sugs').innerHTML=s.length?'<span class="lbl">במאגר:</span>'+s.map(x=>'<button type="button" class="chip" data-q="'+esc(x.q)+'">'+esc(x.label)+'</button>').join(''):exampleChips();});
+document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('.chip[data-q]'); if(b){$('q').value=b.dataset.q;setDir();run(b.dataset.q);window.scrollTo({top:0,behavior:reduced?'auto':'smooth'});}});
 $('foot').textContent='במאגר המובנה '+DB.length+' חומרים ו־118 יסודות. הצורה המרחבית מחושבת לפי מודל VSEPR, כך שהזוויות הן הזוויות האידיאליות. חומר שאינו במאגר נשלף ממאגר PubChem ומסומן בהתאם.';
 if(reduced) $('optRot').checked=false;
 $('sugs').innerHTML=exampleChips();
