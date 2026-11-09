@@ -30,6 +30,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.5}
 .wrap{max-width:980px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px}
@@ -62,8 +63,19 @@ button.go{font:inherit;font-weight:700;padding:11px 20px;border:0;border-radius:
 .ctrl{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:15px;color:var(--muted)}
 .ctrl label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .ctrl input{accent-color:var(--accent);width:17px;height:17px}
+.cardhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cardhead h3{margin-inline-end:auto}
+.zoom,.seg{display:flex;gap:4px}
+.zoom button,.seg button{font:inherit;font-size:15px;min-width:36px;height:34px;padding:0 10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;cursor:pointer}
+.zoom button{font-size:20px;line-height:1;padding:0}
+.seg button[aria-pressed="true"],.chip[aria-pressed="true"]{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+.orb{display:flex;flex-wrap:wrap;gap:8px 16px}
+.ob{display:inline-flex;align-items:center;font-family:var(--mono)}
+.ob b{font-weight:600;font-size:14px;color:var(--muted);margin-right:6px}
+.ob i{display:inline-flex;justify-content:center;align-items:center;width:30px;height:34px;border:1.5px solid var(--ink);font-style:normal;font-size:17px;letter-spacing:-3px;margin-left:-1.5px;color:var(--accent)}
+.lg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 4px 0 10px}
 .cap{font-size:14.5px;color:var(--muted);margin:0}
-#lewis{display:flex;align-items:center;justify-content:safe center;min-height:300px;max-height:460px;overflow:auto}
+#lewis{touch-action:pan-x pan-y;display:flex;align-items:center;justify-content:safe center;min-height:300px;max-height:460px;overflow:auto}
 #lewis svg{display:block;width:100%;height:auto;max-height:340px}
 .lw-sym{fill:var(--ink);font:600 20px var(--mono);text-anchor:middle;dominant-baseline:central}
 .lw-bond{stroke:var(--ink);stroke-width:1.9;stroke-linecap:round}
@@ -107,7 +119,11 @@ footer{color:var(--muted);font-size:14px;max-width:70ch}
 
   <div class="grid">
     <section class="card">
-      <h3 id="cvTitle">מודל תלת־ממדי</h3>
+      <div class="cardhead"><h3 id="cvTitle">מודל תלת־ממדי</h3>
+        <div class="seg" id="atomTabs" hidden><button type="button" data-m="bohr" aria-pressed="true">בוהר</button><button type="button" data-m="cloud" aria-pressed="false">אורביטלים</button></div>
+        <div class="zoom"><button type="button" id="zOut" aria-label="הקטנת המודל">−</button><button type="button" id="zIn" aria-label="הגדלת המודל">+</button></div>
+      </div>
+      <div class="chips" id="subs" dir="ltr" hidden></div>
       <canvas id="cv" aria-label="מודל של החומר. גררו כדי לסובב."></canvas>
       <div class="ctrl" id="ctrl">
         <label><input type="checkbox" id="optLP" checked> זוגות לא קושרים</label>
@@ -116,11 +132,19 @@ footer{color:var(--muted);font-size:14px;max-width:70ch}
       <p class="cap" id="cvCap"></p>
     </section>
     <section class="card">
-      <h3>מבנה לואיס</h3>
+      <div class="cardhead"><h3>מבנה לואיס</h3>
+        <div class="zoom"><button type="button" id="lzOut" aria-label="הקטנת מבנה לואיס">−</button><button type="button" id="lzIn" aria-label="הגדלת מבנה לואיס">+</button></div>
+      </div>
       <div id="lewis" dir="ltr"></div>
       <ul class="legend" id="lwLegend"></ul>
     </section>
   </div>
+
+  <section class="card" id="orbCard" hidden>
+    <h3>דיאגרמת אורביטלים</h3>
+    <div class="orb" id="orbBoxes" dir="ltr"></div>
+    <p class="cap">כל משבצת היא אורביטל אחד, ובכל אורביטל עד שני אלקטרונים בספין הפוך. לפי כלל הונד, אורביטלים באותה תת־רמה מתמלאים קודם באלקטרון אחד כל אחד.</p>
+  </section>
 
   <section class="card">
     <h3>נתונים</h3>
@@ -652,6 +676,41 @@ const reduced=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').
 
 /* ---------- canvas state ---------- */
 const cv=$('cv'),ctx=cv.getContext('2d');
+let zoom=1, lz=1, atomState=null, atomMode='bohr', cloudSub=null, cloudOrb=0;
+const clampZ=z=>Math.max(.4,Math.min(6,z));
+const ORBN={0:['s'],1:['px','py','pz'],2:['dxy','dyz','dxz','dx²−y²','dz²'],3:['fz³','fxz²','fyz²','fz(x²−y²)','fxyz','fx(x²−3y²)','fy(3x²−y²)']};
+const ANG={0:[()=>1],1:[(x,y,z)=>x,(x,y,z)=>y,(x,y,z)=>z],2:[(x,y,z)=>x*y,(x,y,z)=>y*z,(x,y,z)=>x*z,(x,y,z)=>x*x-y*y,(x,y,z)=>3*z*z-1],
+ 3:[(x,y,z)=>z*(5*z*z-3),(x,y,z)=>x*(5*z*z-1),(x,y,z)=>y*(5*z*z-1),(x,y,z)=>z*(x*x-y*y),(x,y,z)=>x*y*z,(x,y,z)=>x*(x*x-3*y*y),(x,y,z)=>y*(3*x*x-y*y)]};
+const OCOL=['#1f9e8a','#e2683c','#4a6fe0','#c2a11b','#a04cc0','#3aa655','#d14a7b'];
+const cloudCache={};
+function sampleCloud(n,l,norb){
+  const key=n+'_'+l+'_'+norb; if(cloudCache[key]) return cloudCache[key];
+  const rmax=2.2*n*n+12,G=600,cdf=new Float64Array(G+1),k=n-l-1,al=2*l+1;
+  const Rf=r=>{const x=2*r/n; let L0=1,L1=1+al-x,L=k===0?L0:L1; for(let i=1;i<k;i++){L=((2*i+1+al-x)*L1-(i+al)*L0)/(i+1);L0=L1;L1=L;} return Math.pow(x,l)*Math.exp(-x/2)*L;};
+  for(let i=1;i<=G;i++){const r=i*rmax/G,v=Rf(r);cdf[i]=cdf[i-1]+r*r*v*v;}
+  let seed=12345+n*31+l*7; const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  const dir=()=>{const z=2*rnd()-1,ph=2*Math.PI*rnd(),q=Math.sqrt(1-z*z);return [q*Math.cos(ph),q*Math.sin(ph),z];};
+  const sampR=()=>{const u=rnd()*cdf[G]; let lo=0,hi=G; while(hi-lo>1){const m=(lo+hi)>>1; if(cdf[m]<u)lo=m;else hi=m;} return (lo+rnd())*rmax/G;};
+  const per=2400,orbs=[],rs=[];
+  for(let o=0;o<norb;o++){
+    const f=ANG[l][o]; let fm=0; for(let i=0;i<2500;i++){const d=dir(),v=f(d[0],d[1],d[2]);fm=Math.max(fm,v*v);} fm*=1.02;
+    const pts=[]; let guard=0;
+    while(pts.length<per&&guard++<per*60){const d=dir(),v=f(d[0],d[1],d[2]); if(v*v/fm<rnd())continue; const r=sampR(); pts.push([d[0]*r,d[1]*r,d[2]*r,(v>=0)===(Rf(r)>=0)?1:0]); rs.push(r);}
+    orbs.push(pts);
+  }
+  rs.sort((a,b)=>a-b);
+  return cloudCache[key]={orbs,R:(rs[Math.floor(rs.length*.88)]||rmax)*1.05};
+}
+function drawCloud(w,h,t){
+  const cx=w/2,cy=h/2,S=Math.min(w,h)/2/view.R*.95*zoom,M=RM,one=view.sel!=='all',sz=one?2.1:1.7;
+  const list=one?[view.orbs[view.sel]]:view.orbs;
+  for(let pass=0;pass<2;pass++){ ctx.globalAlpha=pass?.8:.4;
+    list.forEach((pts,o)=>{ const stp=one?1:2;
+      for(let i=0;i<pts.length;i+=stp){const p=pts[i],z=M[2][0]*p[0]+M[2][1]*p[1]+M[2][2]*p[2]; if((z>0)!==(pass===1))continue;
+        ctx.fillStyle=one?(p[3]?OCOL[0]:OCOL[1]):OCOL[o%7];
+        ctx.fillRect(cx+(M[0][0]*p[0]+M[0][1]*p[1]+M[0][2]*p[2])*S-sz/2,cy-(M[1][0]*p[0]+M[1][1]*p[1]+M[1][2]*p[2])*S-sz/2,sz,sz);} }); }
+  ctx.globalAlpha=1;ctx.fillStyle=t.ink;ctx.beginPath();ctx.arc(cx,cy,3,0,7);ctx.fill();
+}
 let view=null, RM=[[1,0,0],[0,1,0],[0,0,1]], dragging=false, tAnim=0, raf=0;
 const mulM=(M,p)=>[M[0][0]*p[0]+M[0][1]*p[1]+M[0][2]*p[2],M[1][0]*p[0]+M[1][1]*p[1]+M[1][2]*p[2],M[2][0]*p[0]+M[2][1]*p[1]+M[2][2]*p[2]];
 const mm=(A,B)=>A.map((r,i)=>r.map((_,j)=>A[i][0]*B[0][j]+A[i][1]*B[1][j]+A[i][2]*B[2][j]));
@@ -665,7 +724,8 @@ function tok(){const cs=getComputedStyle(document.documentElement);const g=n=>cs
 function draw(){
   const [w,h]=fit(); ctx.clearRect(0,0,w,h); if(!view) return; const t=tok();
   if(view.mode==='bohr') return drawBohr(w,h,t);
-  const mol=view.mol,P=view.P.map(p=>mulM(RM,p)),S=Math.min(w,h)/2/view.R*.98,cx=w/2,cy=h/2,D=view.R*4+6;
+  if(view.mode==='cloud') return drawCloud(w,h,t);
+  const mol=view.mol,P=view.P.map(p=>mulM(RM,p)),S=Math.min(w,h)/2/view.R*.98*zoom,cx=w/2,cy=h/2,D=view.R*4+6;
   const pr=p=>{const f=D/(D-p[2]);return [cx+p[0]*S*f,cy-p[1]*S*f,f];};
   const ar=sym=>.2+.26*cov(sym), items=[];
   mol.atoms.forEach((a,i)=>{const [x,y,f]=pr(P[i]);items.push({z:P[i][2],fn(){const r=ar(a.sym)*S*f,c=colorOf(a.sym),g=ctx.createRadialGradient(x-r*.35,y-r*.35,r*.1,x,y,r);
@@ -680,7 +740,7 @@ function draw(){
   items.sort((p,q)=>p.z-q.z).forEach(it=>it.fn());
 }
 function drawBohr(w,h,t){
-  const sh=view.shells,cx=w/2,cy=h/2,Rm=Math.min(w,h)/2-10,r0=Math.max(24,Rm*.2),step=sh.length>1?(Rm-r0-6)/sh.length:Rm*.45;
+  const sh=view.shells,cx=w/2,cy=h/2,Rm=(Math.min(w,h)/2-10)*zoom,r0=Math.max(24,Rm*.2),step=sh.length>1?(Rm-r0-6)/sh.length:Rm*.45;
   ctx.textAlign='center';ctx.textBaseline='middle';
   sh.forEach((n,i)=>{const r=r0+step*(i+1);ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.strokeStyle=t.line;ctx.lineWidth=1.3;ctx.stroke();
     const sp=(i%2?-1:1)*tAnim/(1+i*.6);ctx.fillStyle=t.accent;for(let k=0;k<n;k++){const a=sp+k*2*Math.PI/n-Math.PI/2;ctx.beginPath();ctx.arc(cx+r*Math.cos(a),cy+r*Math.sin(a),sh.length>5?3:4.2,0,7);ctx.fill();}
@@ -693,16 +753,31 @@ function loop(){
   raf=0; if(!view) return;
   const spin=$('optRot').checked&&!reduced;
   if(view.mode==='bohr'){ if(spin) tAnim+=.012; }
+  else if(view.mode==='cloud'){ if(spin&&!dragging) RM=mm(rotY(.006),RM); }
   else if(spin&&!dragging) RM=mm(rotY(.007),RM);
   draw(); if(spin||dragging) raf=requestAnimationFrame(loop);
 }
 function kick(){ if(!raf) raf=requestAnimationFrame(loop); }
-let last=null;
-cv.addEventListener('pointerdown',e=>{dragging=true;last=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId);kick();});
-cv.addEventListener('pointermove',e=>{ if(!dragging||!view||view.mode==='bohr')return; const dx=e.clientX-last[0],dy=e.clientY-last[1]; last=[e.clientX,e.clientY]; RM=mm(mm(rotY(dx*.01),rotX(dy*.01)),RM); kick(); });
-const end=()=>{dragging=false;}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+let last=null; const ptrs=new Map(); let pinch0=0,zoom0=1;
+const pdist=m=>{const v=[...m.values()];return Math.hypot(v[0][0]-v[1][0],v[0][1]-v[1][1])||1;};
+cv.addEventListener('pointerdown',e=>{ptrs.set(e.pointerId,[e.clientX,e.clientY]);dragging=true;last=[e.clientX,e.clientY];try{cv.setPointerCapture(e.pointerId);}catch(x){} if(ptrs.size===2){pinch0=pdist(ptrs);zoom0=zoom;} kick();});
+cv.addEventListener('pointermove',e=>{ if(!ptrs.has(e.pointerId)||!view)return; ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size>=2){zoom=clampZ(zoom0*pdist(ptrs)/pinch0);kick();return;}
+  const dx=e.clientX-last[0],dy=e.clientY-last[1]; last=[e.clientX,e.clientY]; if(view.mode!=='bohr') RM=mm(mm(rotY(dx*.01),rotX(dy*.01)),RM); kick(); });
+const end=e=>{ptrs.delete(e.pointerId);dragging=ptrs.size>0; if(ptrs.size===1) last=[...ptrs.values()][0];}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+cv.addEventListener('wheel',e=>{ if(!e.ctrlKey)return; e.preventDefault(); zoom=clampZ(zoom*Math.exp(-e.deltaY*.01)); kick(); },{passive:false});
+$('zIn').addEventListener('click',()=>{zoom=clampZ(zoom*1.3);kick();}); $('zOut').addEventListener('click',()=>{zoom=clampZ(zoom/1.3);kick();});
+/* Lewis zoom */
+function fitLewis(){const box=$('lewis'),svg=box.querySelector('svg'); if(!svg)return; const vb=svg.viewBox.baseVal,W=vb.width,H=vb.height;
+  const base=W>560?W*.85:Math.min(Math.max(120,box.clientWidth-8),W*1.45,340*W/H); svg.style.cssText='flex:none;max-width:none;max-height:none;height:auto;width:'+Math.round(base*lz)+'px';}
+const clampL=z=>Math.max(.4,Math.min(5,z));
+$('lzIn').addEventListener('click',()=>{lz=clampL(lz*1.3);fitLewis();}); $('lzOut').addEventListener('click',()=>{lz=clampL(lz/1.3);fitLewis();});
+{const lp=new Map(); let d0=0,z0=1; const lw=$('lewis');
+ lw.addEventListener('pointerdown',e=>{lp.set(e.pointerId,[e.clientX,e.clientY]); if(lp.size===2){d0=pdist(lp);z0=lz;}});
+ lw.addEventListener('pointermove',e=>{ if(!lp.has(e.pointerId))return; lp.set(e.pointerId,[e.clientX,e.clientY]); if(lp.size===2){lz=clampL(z0*pdist(lp)/d0);fitLewis();} });
+ const le=e=>lp.delete(e.pointerId); lw.addEventListener('pointerup',le); lw.addEventListener('pointercancel',le); lw.addEventListener('pointerleave',le);}
 $('optLP').addEventListener('change',kick); $('optRot').addEventListener('change',kick);
-if(window.ResizeObserver) new ResizeObserver(kick).observe(cv); else window.addEventListener('resize',kick);
+if(window.ResizeObserver) new ResizeObserver(()=>{kick();fitLewis();}).observe(cv); else window.addEventListener('resize',kick);
 if(window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change',kick);
 new MutationObserver(kick).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
@@ -766,6 +841,28 @@ function head(name,formula,kind,note,ai){
 function related(list){const r=$('related'); r.hidden=!list.length; r.innerHTML=list.length?'<span class="lbl">קשור:</span>'+list.map(e=>'<button type="button" class="chip" data-q="'+esc(e.he)+'">'+esc(e.he)+' '+fHtml(e.f)+'</button>').join(''):'';}
 function temp(v,t){ if(t) return ltr(esc(t)); return v==null?null:ltr(num(v,1)+' °C'); }
 
+function setAtomMode(m){
+  const {el,cf,n}=atomState; atomMode=m;
+  [...$('atomTabs').children].forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.m===m)));
+  if(m==='bohr'){
+    view={mode:'bohr',shells:cf.shells.length?cf.shells:[0],p:el.Z,n,color:colorOf(el.sym)==='#4d5357'?'#9aa3a8':colorOf(el.sym)};
+    $('cvTitle').textContent='מודל בוהר'; $('subs').hidden=true;
+    $('cvCap').textContent='האלקטרונים מסודרים ברמות אנרגיה סביב הגרעין. המספר ליד כל מעגל הוא מספר האלקטרונים ברמה. זה מודל פשוט; לתמונה הקוונטית עברו ל"אורביטלים".';
+  } else {
+    if(!cloudSub||!cf.list.some(x=>x[0]===cloudSub)) cloudSub=cf.list[cf.list.length-1][0];
+    const cnt=cf.list.find(x=>x[0]===cloudSub)[1],nn=+cloudSub[0],l=LORD.indexOf(cloudSub[1]),norb=Math.min(cnt,2*l+1),c=sampleCloud(nn,l,norb);
+    if(cloudOrb!=='all'&&!(cloudOrb<norb)) cloudOrb=0;
+    view={mode:'cloud',orbs:c.orbs,R:c.R,sel:norb===1?0:cloudOrb};
+    $('cvTitle').textContent='ענן אלקטרונים';
+    const names=ORBN[l].slice(0,norb).map(nm=>l?nm.replace(/^[pdf]/,x=>nn+x):nn+'s');
+    $('subs').hidden=false; $('subs').innerHTML='<span class="lbl">תת־רמה:</span>'+cf.list.map(([sb,k])=>'<button type="button" class="chip" data-sub="'+sb+'" aria-pressed="'+(sb===cloudSub)+'">'+sb+'<sup>'+k+'</sup></button>').join('')+
+      (norb>1?'<span style="flex-basis:100%"></span><span class="lbl">אורביטל:</span>'+names.map((nm,i)=>'<button type="button" class="chip" data-orb="'+i+'" aria-pressed="'+(view.sel===i)+'">'+nm+'</button>').join('')+'<button type="button" class="chip" data-orb="all" aria-pressed="'+(view.sel==='all')+'">הכול יחד</button>':'');
+    $('cvCap').textContent='כל נקודה היא מקום שבו סביר למצוא את האלקטרון; אזור צפוף פירושו הסתברות גבוהה. '+(view.sel==='all'?'כל צבע הוא אורביטל אחר באותה תת־רמה. ':'שני הצבעים מסמנים את הסימן (הפאזה) של פונקציית הגל. ')+'בתת־הרמה הזו מאוכלסים '+norb+' אורביטלים ב־'+cnt+' אלקטרונים. גררו כדי לסובב. הצורות הן של אטום דמוי־מימן, כלומר קירוב איכותי.';
+  }
+  kick();
+}
+$('atomTabs').addEventListener('click',e=>{const b=e.target.closest('button[data-m]'); if(b&&atomState) setAtomMode(b.dataset.m);});
+$('subs').addEventListener('click',e=>{const b=e.target.closest('button[data-sub]'); if(b&&atomState){cloudSub=b.dataset.sub;setAtomMode('cloud');return;} const o=e.target.closest('button[data-orb]'); if(o&&atomState){cloudOrb=o.dataset.orb==='all'?'all':+o.dataset.orb;setAtomMode('cloud');}});
 function showAtom(sym,q,nm){
   const el=ELS[sym]; if(q>el.Z) throw new Error('ל־'+el.he+' יש רק '+el.Z+' אלקטרונים.');
   const cf=config(el.Z,q), n=Math.round(el.mass)-el.Z;
@@ -773,12 +870,15 @@ function showAtom(sym,q,nm){
   head(name,sym+(q?'^'+(Math.abs(q)>1?Math.abs(q):'')+(q>0?'+':'-'):''),q?(q>0?'יון חד־אטומי (קטיון)':'יון חד־אטומי (אניון)'):'אטום',
     q?null:el.en+' · '+category(el));
   related(q?[]:DB.filter(e=>new RegExp('^'+sym+'\\d+$').test(e.f)));
-  view={mode:'bohr',shells:cf.shells.length?cf.shells:[0],p:el.Z,n,color:colorOf(sym)==='#4d5357'?'#9aa3a8':colorOf(sym)};
-  $('cvTitle').textContent='מודל בוהר'; $('optLP').parentElement.hidden=true;
-  $('cvCap').textContent='האלקטרונים מסודרים ברמות אנרגיה סביב הגרעין. המספר ליד כל מעגל הוא מספר האלקטרונים ברמה.';
+  atomState={el,q,cf,n}; zoom=1; lz=1; RM=mm(rotX(-.4),rotY(.6));
+  $('optLP').parentElement.hidden=true; $('atomTabs').hidden=!cf.list.length;
+  setAtomMode(cf.list.length?atomMode:'bohr');
+  const order=cf.list.slice().sort((x,y)=>AUF.indexOf(x[0])-AUF.indexOf(y[0]));
+  $('orbBoxes').innerHTML=order.map(([sb,k])=>{const m=2*LORD.indexOf(sb[1])+1; let h='<span class="ob"><b>'+sb+'</b>'; for(let i=0;i<m;i++){h+='<i>'+(k>i?'↑':'')+(k>m+i?'↓':'')+'</i>';} return h+'</span>';}).join('');
+  $('orbCard').hidden=!cf.list.length;
   const lw=lewisAtom(el,q);
   $('lewis').innerHTML=lw||'<p class="cap" dir="rtl">למתכות מעבר ולגוש f לא נהוג לצייר סמל לואיס. ראו את היערכות האלקטרונים בטבלה.</p>';
-  $('lwLegend').innerHTML=lw?'<li><i style="background:var(--accent)"></i>אלקטרון ערכיות</li>':'';
+  $('lwLegend').innerHTML=lw?'<li><i style="background:var(--accent)"></i>אלקטרון ערכיות</li>':''; fitLewis();
   const cstr=l=>l.map(([s,k])=>s+'<sup>'+k+'</sup>').join(' ');
   const iso=q?ELIST.find(e=>e.group===18&&e.Z===cf.ne):null;
   rows([
@@ -813,7 +913,8 @@ function showMol(entry){
   $('cvTitle').textContent='מודל תלת־ממדי'; $('optLP').parentElement.hidden=false;
   const centers=A.filter(a=>a.deg>=2);
   $('cvCap').textContent=multi?'מוצגת יחידת נוסחה אחת. במציאות היונים מסודרים בסריג גבישי. גררו כדי לסובב.':'גררו כדי לסובב. הענן הירקרק מסמן זוג אלקטרונים לא קושר.';
-  $('lewis').innerHTML=lewisMol(mol,pos2);
+  atomState=null; zoom=1; lz=1; $('atomTabs').hidden=true; $('subs').hidden=true; $('orbCard').hidden=true;
+  $('lewis').innerHTML=lewisMol(mol,pos2); fitLewis();
   const leg=['<li><i style="background:var(--accent)"></i>אלקטרון לא קושר</li>','<li>קו = זוג קושר</li>']; if(A.some(a=>a.fc)&&!multi) leg.push('<li><i style="background:var(--warn)"></i>מטען פורמלי</li>');
   $('lwLegend').innerHTML=leg.join('');
   /* data */
