@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>סימולטור מולקולות</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b7566">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="מולקולות">
 <meta name="description" content="סימולטור כימיה בעברית: מקלידים שם של מולקולה, אטום או יון ורואים מודל תלת־ממדי, מבנה לואיס ונתונים.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=Frank+Ruhl+Libre:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -1072,6 +1078,7 @@ $('foot').textContent='במאגר המובנה '+DB.length+' חומרים ו־11
 if(reduced) $('optRot').checked=false;
 $('sugs').innerHTML=exampleChips();
 run('מים');
+if('serviceWorker' in navigator&&location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(kick);
 })();
 </script>
